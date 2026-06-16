@@ -5,6 +5,9 @@ export default function DashboardHeader({
   lastUpdated,
   loading,
   onRefresh,
+  sources,
+  selectedSourceId,
+  onSourceChange,
 }) {
   return (
     <div className="card header">
@@ -24,13 +27,32 @@ export default function DashboardHeader({
         </div>
       </div>
 
-      <button
-        className="primary-button"
-        onClick={onRefresh}
-        disabled={loading}
-      >
-        {loading ? "Обновление..." : "Обновить сейчас"}
-      </button>
+      <div className="header__actions">
+        <div className="source-select">
+          <label className="source-select__label" htmlFor="source-select">
+            Offer source
+          </label>
+          <select
+            id="source-select"
+            className="source-select__input"
+            value={selectedSourceId}
+            onChange={(event) => onSourceChange(event.target.value)}
+          >
+            {sources.map((source) => (
+              <option key={source.id} value={source.id}>
+                {source.label}
+              </option>
+            ))}
+          </select>
+        </div>
+        <button
+          className="primary-button"
+          onClick={onRefresh}
+          disabled={loading}
+        >
+          {loading ? "Обновление..." : "Обновить сейчас"}
+        </button>
+      </div>
     </div>
   );
 }

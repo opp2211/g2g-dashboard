@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useState } from "react";
-import { fetchG2GOffers } from "../api/g2gApi";
 import { REFRESH_INTERVAL_MS } from "../constants/config";
+import { fetchG2GOffers } from "../api/g2gApi";
 
-export function useOffers() {
+export function useOffers(apiUrl) {
   const [offers, setOffers] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -10,11 +10,17 @@ export function useOffers() {
   const [countdownMs, setCountdownMs] = useState(REFRESH_INTERVAL_MS);
 
   const refresh = useCallback(async () => {
+    if (!apiUrl) {
+      setError("Missing API URL");
+      setLoading(false);
+      return;
+    }
+
     setLoading(true);
     setError("");
 
     try {
-      const mapped = await fetchG2GOffers();
+      const mapped = await fetchG2GOffers(apiUrl);
       setOffers(mapped);
       setLastUpdated(new Date());
       setCountdownMs(REFRESH_INTERVAL_MS);
@@ -25,7 +31,7 @@ export function useOffers() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [apiUrl]);
 
   useEffect(() => {
     refresh();

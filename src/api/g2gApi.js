@@ -1,11 +1,13 @@
-import { API_URL } from "../constants/config";
-
 const defaultHeaders = {
   Accept: "application/json",
 };
 
-export async function fetchG2GOffers() {
-  const response = await fetch(API_URL, {
+export async function fetchG2GOffers(apiUrl) {
+  if (!apiUrl) {
+    throw new Error("Missing API URL");
+  }
+
+  const response = await fetch(apiUrl, {
     method: "GET",
     headers: defaultHeaders,
   });
