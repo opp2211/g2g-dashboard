@@ -10,6 +10,11 @@ concurrency:
   group: production-deploy
   cancel-in-progress: true
 
+env:
+  NODE_VERSION: 20
+  BUILD_DIR: dist
+  KEEP_RELEASES: 5
+
 jobs:
   deploy:
     runs-on: ubuntu-latest
@@ -23,7 +28,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: ${{ env.NODE_VERSION }}
           cache: npm
 
       - name: Install dependencies
@@ -35,28 +40,85 @@ jobs:
       - name: Build
         run: npm run build
 
+      - name: Verify build artifact
+        run: test -f "${BUILD_DIR}/index.html"
+
       - name: Configure SSH
         env:
           DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+          DEPLOY_SSH_PORT: ${{ secrets.DEPLOY_SSH_PORT }}
+          DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
         run: |
           set -euo pipefail
-          if [ -z "$DEPLOY_SSH_KEY" ]; then
-            echo "::error::DEPLOY_SSH_KEY secret is not configured"
-            exit 1
-          fi
+
+          for name in DEPLOY_SSH_KEY DEPLOY_HOST DEPLOY_USER; do
+            if [ -z "${!name:-}" ]; then
+              echo "::error::$name secret is not configured"
+              exit 1
+            fi
+          done
+
+          DEPLOY_SSH_PORT="${DEPLOY_SSH_PORT:-22}"
+
           mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
           printf '%s\n' "$DEPLOY_SSH_KEY" > ~/.ssh/deploy_key
           chmod 600 ~/.ssh/deploy_key
-          ssh-keyscan -H 52.58.4.206 >> ~/.ssh/known_hosts
 
-      - name: Deploy to VPS
+          if [ -n "$DEPLOY_KNOWN_HOSTS" ]; then
+            printf '%s\n' "$DEPLOY_KNOWN_HOSTS" >> ~/.ssh/known_hosts
+          else
+            ssh-keyscan -p "$DEPLOY_SSH_PORT" -H "$DEPLOY_HOST" >> ~/.ssh/known_hosts
+          fi
+
+      - name: Deploy static files to VPS
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+          DEPLOY_PATH: ${{ secrets.DEPLOY_PATH }}
+          DEPLOY_SSH_PORT: ${{ secrets.DEPLOY_SSH_PORT }}
         run: |
           set -euo pipefail
-          ssh -i ~/.ssh/deploy_key -o BatchMode=yes ubuntu@52.58.4.206 <<'EOF'
+
+          DEPLOY_SSH_PORT="${DEPLOY_SSH_PORT:-22}"
+          DEPLOY_PATH="${DEPLOY_PATH:-/srv/g2g-dashboard}"
+
+          if [ -z "$DEPLOY_HOST" ] || [ -z "$DEPLOY_USER" ]; then
+            echo "::error::DEPLOY_HOST and DEPLOY_USER secrets are required"
+            exit 1
+          fi
+
+          if [[ "$DEPLOY_PATH" != /* ]]; then
+            echo "::error::DEPLOY_PATH must be an absolute path"
+            exit 1
+          fi
+
+          if [[ "$DEPLOY_PATH" == *"'"* ]]; then
+            echo "::error::DEPLOY_PATH must not contain single quotes"
+            exit 1
+          fi
+
+          release_id="$(date -u +'%Y%m%d%H%M%S')-${GITHUB_SHA::7}"
+          remote="$DEPLOY_USER@$DEPLOY_HOST"
+          release_path="$DEPLOY_PATH/releases/$release_id"
+          ssh_opts=(-i ~/.ssh/deploy_key -p "$DEPLOY_SSH_PORT" -o BatchMode=yes)
+
+          ssh "${ssh_opts[@]}" "$remote" "mkdir -p '$release_path'"
+          tar -C "$BUILD_DIR" -czf - . | ssh "${ssh_opts[@]}" "$remote" "tar -xzf - -C '$release_path'"
+
+          ssh "${ssh_opts[@]}" "$remote" "DEPLOY_PATH='$DEPLOY_PATH' RELEASE_ID='$release_id' KEEP_RELEASES='$KEEP_RELEASES' bash -s" <<'EOF'
           set -euo pipefail
-          cd /opt/g2g-dashboard
-          git fetch origin master
-          git reset --hard origin/master
-          sudo docker compose up -d --build
-          sudo docker image prune -f
+
+          release_path="$DEPLOY_PATH/releases/$RELEASE_ID"
+          test -f "$release_path/index.html"
+
+          ln -sfn "$release_path" "$DEPLOY_PATH/current.tmp"
+          mv -Tf "$DEPLOY_PATH/current.tmp" "$DEPLOY_PATH/current"
+
+          find "$DEPLOY_PATH/releases" -mindepth 1 -maxdepth 1 -type d \
+            | sort -r \
+            | tail -n +"$((KEEP_RELEASES + 1))" \
+            | xargs -r rm -rf
           EOF
